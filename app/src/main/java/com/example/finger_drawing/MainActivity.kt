@@ -185,11 +185,19 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                             val isLeft = handenessLabel == "Left"
 
                             // Check if hand is open
-                            val isOpen = checkIfHandIsOpen(
-                                landmarks,
-                                resultBundle.inputImageWidth,
-                                resultBundle.inputImageHeight
-                            )
+                            val isOpen = if (isLeft) {
+                                checkIfIndexFingerOnly(
+                                    landmarks,
+                                    resultBundle.inputImageWidth,
+                                    resultBundle.inputImageHeight
+                                )
+                            } else {
+                                checkIfHandIsOpen(
+                                    landmarks,
+                                    resultBundle.inputImageWidth,
+                                    resultBundle.inputImageHeight
+                                )
+                            }
 
                             // Check if hand is horizontal open palm
                             val isHorizontalOpen = checkIfHandIsHorizontalOpenPalm(
@@ -301,23 +309,38 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                         "Both hands detected - Left hand open: $leftHandOpen, Drawing at right fingertip"
                     )
 
-                    // Add drawing points if LEFT hand is open (drawing at RIGHT hand position)
-                    if (leftHandOpen) {
-                        if (!_isCurrentlyDrawing.value) {
-                            // Start new drawing path
-                            _isCurrentlyDrawing.value = true
-                            _currentPath.value = listOf(rightHandPosition!!)
+                    // Check if both hands are in horizontal open palm mode - if so, disable drawing
+                    val bothHandsHorizontalOpen =
+                        _leftHandHorizontalOpen.value && _rightHandHorizontalOpen.value
+
+                    if (!bothHandsHorizontalOpen) {
+                        // Add drawing points if LEFT hand is open (drawing at RIGHT hand position)
+                        if (leftHandOpen) {
+                            if (!_isCurrentlyDrawing.value) {
+                                // Start new drawing path
+                                _isCurrentlyDrawing.value = true
+                                _currentPath.value = listOf(rightHandPosition!!)
+                            } else {
+                                // Continue current drawing path
+                                _currentPath.value = _currentPath.value + rightHandPosition!!
+                            }
                         } else {
-                            // Continue current drawing path
-                            _currentPath.value = _currentPath.value + rightHandPosition!!
+                            // Hand closed - stop drawing and add current path to drawing paths
+                            _isCurrentlyDrawing.value = false
+                            if (_currentPath.value.isNotEmpty()) {
+                                _drawingPaths.value =
+                                    _drawingPaths.value + listOf(_currentPath.value)
+                                _currentPath.value = emptyList()
+                            }
                         }
                     } else {
-                        // Hand closed - stop drawing and add current path to drawing paths
-                        _isCurrentlyDrawing.value = false
-                        if (_currentPath.value.isNotEmpty()) {
+                        // Both hands horizontal open - stop any current drawing
+                        if (_isCurrentlyDrawing.value && _currentPath.value.isNotEmpty()) {
                             _drawingPaths.value = _drawingPaths.value + listOf(_currentPath.value)
                             _currentPath.value = emptyList()
                         }
+                        _isCurrentlyDrawing.value = false
+                        Log.d("HandTracking", "Both hands horizontal open - drawing disabled")
                     }
                 } else {
                     // Not both hands detected, hide UI but keep all drawings
@@ -413,6 +436,92 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
         Log.d("HandTracking", "Hand gesture - open fingers: $openFingers/5, isOpen: $isOpen")
 
         return isOpen
+    }
+
+    fun checkIfIndexFingerOnly(
+        landmarks: List<NormalizedLandmark>,
+        imageWidth: Int,
+        imageHeight: Int
+    ): Boolean {
+        // Check if ONLY the index finger is extended while other fingers are closed
+
+        // Check index finger - should be extended
+        val indexTip = landmarks[8]
+        val indexJoint = landmarks[7]
+        val indexMiddle = landmarks[6]
+
+        val indexTipY = indexTip.y() * imageHeight
+        val indexJointY = indexJoint.y() * imageHeight
+        val indexMiddleY = indexMiddle.y() * imageHeight
+
+        val isIndexExtended = indexTipY < indexJointY && indexJointY < indexMiddleY
+
+        if (!isIndexExtended) {
+            Log.d("HandTracking", "Index finger not extended - not index-only gesture")
+            return false
+        }
+
+        // Check that other fingers (middle, ring, pinky) are closed/curled
+        val otherFingerData = listOf(
+            Triple(12, 11, 10), // Middle: tip, joint, middle
+            Triple(16, 15, 14), // Ring: tip, joint, middle
+            Triple(20, 19, 18)  // Pinky: tip, joint, middle
+        )
+
+        var closedFingers = 0
+        for ((tipIndex, jointIndex, middleIndex) in otherFingerData) {
+            val tip = landmarks[tipIndex]
+            val joint = landmarks[jointIndex]
+            val middle = landmarks[middleIndex]
+
+            val tipY = tip.y() * imageHeight
+            val jointY = joint.y() * imageHeight
+            val middleY = middle.y() * imageHeight
+
+            // More strict check - finger is closed if tip is below joint by a meaningful amount
+            // AND the joint is not significantly above the middle joint (finger curled)
+            val isTipBelowJoint = tipY > (jointY + 5) // Tip must be at least 5 pixels below joint
+            val isJointReasonableToMiddle =
+                jointY >= (middleY - 15) // Joint not too far above middle
+            val isFingerClosed = isTipBelowJoint && isJointReasonableToMiddle
+
+            if (isFingerClosed) closedFingers++
+
+            Log.d(
+                "HandTracking",
+                "Finger $tipIndex closed check - tip: ${tipY.toInt()}, joint: ${jointY.toInt()}, middle: ${middleY.toInt()}, " +
+                        "tipBelowJoint: $isTipBelowJoint, jointReasonable: $isJointReasonableToMiddle, closed: $isFingerClosed"
+            )
+        }
+
+        // Check thumb separately - thumb should not be extended outward
+        val thumbTip = landmarks[4]
+        val thumbJoint = landmarks[3]
+        val wrist = landmarks[0]
+
+        val thumbTipX = thumbTip.x() * imageWidth
+        val thumbJointX = thumbJoint.x() * imageWidth
+        val wristX = wrist.x() * imageWidth
+
+        // Thumb is "closed" if it's not extended far from the palm
+        val thumbDistance = kotlin.math.abs(thumbTipX - wristX)
+        val thumbJointDistance = kotlin.math.abs(thumbJointX - wristX)
+        val isThumbClosed = thumbDistance <= (thumbJointDistance + 20) // Small tolerance
+
+        Log.d(
+            "HandTracking",
+            "Thumb check - tip dist: $thumbDistance, joint dist: $thumbJointDistance, closed: $isThumbClosed"
+        )
+
+        // All 3 other fingers should be closed AND thumb should not be extended
+        val isIndexOnly = closedFingers >= 3 && isThumbClosed
+
+        Log.d(
+            "HandTracking",
+            "Index finger only check - index extended: $isIndexExtended, other fingers closed: $closedFingers/3, thumb closed: $isThumbClosed, result: $isIndexOnly"
+        )
+
+        return isIndexOnly
     }
 
     fun checkIfHandIsHorizontalOpenPalm(
@@ -832,35 +941,8 @@ fun FingerTipOverlay(
                     return@Canvas
                 }
 
-                // Single hand horizontal open palm indicators (only if not both hands)
-                if (leftHandHorizontalOpen && leftPalmCenter != null && !bothHandsHorizontalOpen) {
-                    val x = xOffset + (leftPalmCenter.x * actualScaleX)
-                    val y = leftPalmCenter.y * scaleY
-
-                    // Draw palm center indicator
-                    drawCircle(
-                        color = Color.Blue,
-                        radius = 8f,
-                        center = Offset(x, y)
-                    )
-                    Log.d("HandTracking", "Drawing left palm center at ($x, $y)")
-                }
-
-                if (rightHandHorizontalOpen && rightPalmCenter != null && !bothHandsHorizontalOpen) {
-                    val x = xOffset + (rightPalmCenter.x * actualScaleX)
-                    val y = rightPalmCenter.y * scaleY
-
-                    // Draw palm center indicator
-                    drawCircle(
-                        color = Color.Blue,
-                        radius = 8f,
-                        center = Offset(x, y)
-                    )
-                    Log.d("HandTracking", "Drawing right palm center at ($x, $y)")
-                }
-
                 // Only draw the fingertip indicator if hands are detected and not both hands horizontal open
-                if (!bothHandsHorizontalOpen && !isLeftHand && fingerTipPosition != null) {
+                if (!bothHandsHorizontalOpen && fingerTipPosition != null) {
                     val x = xOffset + (fingerTipPosition.x * actualScaleX)
                     val y = fingerTipPosition.y * scaleY
 
@@ -896,15 +978,15 @@ fun FingerTipOverlay(
             val scaleY = screenHeightDp.toFloat() / previewSize.second.toFloat()
 
             // Left hand fire animation
-            if (leftHandHorizontalOpen && leftPalmCenter != null && leftPalmDirection != null) {
+            if (leftHandHorizontalOpen && leftPalmCenter != null && leftPalmDirection != null && rightHandHorizontalOpen) {
                 // Convert palm center to screen coordinates
                 val palmScreenX = xOffset + (leftPalmCenter.x * actualScaleX)
                 val palmScreenY = leftPalmCenter.y * scaleY
 
                 // Use palm direction to position fire perpendicular to palm surface
                 val palmDirection = leftPalmDirection
-                val perpendicularX = palmDirection.second  // Flipped: use +dy instead of -dy
-                val perpendicularY = -palmDirection.first  // Flipped: use -dx instead of +dx
+                val perpendicularX = palmDirection.second
+                val perpendicularY = -palmDirection.first
 
                 // Scale the perpendicular vector for fire distance (80 pixels away from palm)
                 val fireDistance = 80f
@@ -943,7 +1025,7 @@ fun FingerTipOverlay(
             }
 
             // Right hand fire animation
-            if (rightHandHorizontalOpen && rightPalmCenter != null && rightPalmDirection != null) {
+            if (rightHandHorizontalOpen && rightPalmCenter != null && rightPalmDirection != null && leftHandHorizontalOpen) {
                 // Convert palm center to screen coordinates
                 val palmScreenX = xOffset + (rightPalmCenter.x * actualScaleX)
                 val palmScreenY = rightPalmCenter.y * scaleY
@@ -983,7 +1065,7 @@ fun FingerTipOverlay(
 
                 Log.d(
                     "HandTracking",
-                    "RIGHT HAND Fire (FIXED) - Palm direction: (${palmDirection.first}, ${palmDirection.second}), " +
+                    "RIGHT HAND Fire - Palm direction: (${palmDirection.first}, ${palmDirection.second}), " +
                             "Fire position: (${palmScreenX + fireOffsetX}, ${palmScreenY + fireOffsetY}), " +
                             "Angle degrees: $angleDegrees"
                 )
