@@ -69,6 +69,10 @@ dependencies {
     // MediaPipe for hand tracking
     implementation("com.google.mediapipe:tasks-vision:0.10.26")
 
+    // Lottie for animations
+    implementation("com.airbnb.android:lottie:6.6.7")
+    implementation("com.airbnb.android:lottie-compose:6.6.6")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

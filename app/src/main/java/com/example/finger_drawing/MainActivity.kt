@@ -21,17 +21,22 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.airbnb.lottie.LottieProperty
+import com.airbnb.lottie.compose.*
 import com.example.finger_drawing.ui.theme.FingerdrawingTheme
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
@@ -68,6 +73,16 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
     private val _isLeftHand = mutableStateOf(false)
     val isLeftHand: State<Boolean> get() = _isLeftHand
 
+    // New state for horizontal open palm detection
+    private val _isHorizontalOpenPalm = mutableStateOf(false)
+    val isHorizontalOpenPalm: State<Boolean> get() = _isHorizontalOpenPalm
+
+    private val _palmCenter = mutableStateOf<Offset?>(null)
+    val palmCenter: State<Offset?> get() = _palmCenter
+
+    private val _palmDirection = mutableStateOf<Pair<Float, Float>?>(null)
+    val palmDirection: State<Pair<Float, Float>?> get() = _palmDirection
+
     private val _previewSize = mutableStateOf<Pair<Int, Int>?>(null)
     val previewSize: State<Pair<Int, Int>?> get() = _previewSize
 
@@ -90,6 +105,9 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                         drawingPaths = drawingPaths,
                         isHandOpen = isHandOpen,
                         isLeftHand = isLeftHand,
+                        isHorizontalOpenPalm = isHorizontalOpenPalm,
+                        palmCenter = palmCenter,
+                        palmDirection = palmDirection,
                         previewSize = previewSize,
                         isCurrentlyDrawing = isCurrentlyDrawing,
                         currentPath = currentPath
@@ -150,10 +168,17 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                                 resultBundle.inputImageHeight
                             )
 
+                            // Check if hand is horizontal open palm
+                            val isHorizontalOpen = checkIfHandIsHorizontalOpenPalm(
+                                landmarks,
+                                resultBundle.inputImageWidth,
+                                resultBundle.inputImageHeight
+                            )
+
                             Log.d(
                                 "HandTracking",
                                 "Hand $handIndex - Finger tip: (${fingerTipX.toInt()}, ${fingerTipY.toInt()}), " +
-                                        "Handedness: $handenessLabel, Left: $isLeft, Open: $isOpen"
+                                        "Handedness: $handenessLabel, Left: $isLeft, Open: $isOpen, Horizontal Open: $isHorizontalOpen"
                             )
 
                             if (isLeft) {
@@ -166,6 +191,33 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                                 // Left hand controls drawing on/off
                                 leftHandOpen = isOpen
                                 foundLeftHand = true
+                            }
+
+                            if (isHorizontalOpen) {
+                                _isHorizontalOpenPalm.value = true
+                                // Calculate palm center as average of key palm landmarks
+                                val palmLandmarks =
+                                    listOf(0, 5, 9, 13, 17) // wrist, base of each finger
+                                var centerX = 0f
+                                var centerY = 0f
+                                for (landmarkIndex in palmLandmarks) {
+                                    centerX += landmarks[landmarkIndex].x() * resultBundle.inputImageWidth
+                                    centerY += landmarks[landmarkIndex].y() * resultBundle.inputImageHeight
+                                }
+                                centerX /= palmLandmarks.size
+                                centerY /= palmLandmarks.size
+                                _palmCenter.value = Offset(centerX, centerY)
+
+                                val palmDirection = getPalmDirection(
+                                    landmarks,
+                                    resultBundle.inputImageWidth,
+                                    resultBundle.inputImageHeight
+                                )
+                                _palmDirection.value = palmDirection
+                            } else {
+                                _isHorizontalOpenPalm.value = false
+                                _palmCenter.value = null
+                                _palmDirection.value = null
                             }
                         }
                     }
@@ -255,7 +307,8 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
         // Thumb is extended if tip is further from center than joint
         val wrist = landmarks[0]
         val wristX = wrist.x() * imageWidth
-        val isThumbOpen = Math.abs(thumbTipX - wristX) > Math.abs(thumbJointX - wristX)
+        val isThumbOpen =
+            kotlin.math.abs(thumbTipX - wristX) > kotlin.math.abs(thumbJointX - wristX)
         if (isThumbOpen) openFingers++
 
         Log.d(
@@ -296,6 +349,91 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
 
         return isOpen
     }
+
+    fun checkIfHandIsHorizontalOpenPalm(
+        landmarks: List<NormalizedLandmark>,
+        imageWidth: Int,
+        imageHeight: Int
+    ): Boolean {
+        // First check if hand is open (at least 3 fingers extended)
+        if (!checkIfHandIsOpen(landmarks, imageWidth, imageHeight)) {
+            return false
+        }
+
+        // Check palm orientation using cross product
+        val wrist = landmarks[0]
+        val indexBase = landmarks[5]
+        val pinkyBase = landmarks[17]
+
+        // Convert to pixel coordinates
+        val wristX = wrist.x() * imageWidth
+        val wristY = wrist.y() * imageHeight
+        val wristZ = wrist.z() * imageWidth  // Using width as depth scale
+
+        val indexBaseX = indexBase.x() * imageWidth
+        val indexBaseY = indexBase.y() * imageHeight
+        val indexBaseZ = indexBase.z() * imageWidth
+
+        val pinkyBaseX = pinkyBase.x() * imageWidth
+        val pinkyBaseY = pinkyBase.y() * imageHeight
+        val pinkyBaseZ = pinkyBase.z() * imageWidth
+
+        // Create vectors from wrist to index base and wrist to pinky base
+        val v1x = indexBaseX - wristX
+        val v1y = indexBaseY - wristY
+        val v1z = indexBaseZ - wristZ
+
+        val v2x = pinkyBaseX - wristX
+        val v2y = pinkyBaseY - wristY
+        val v2z = pinkyBaseZ - wristZ
+
+        // Cross product to get palm normal vector
+        val normalX = v1y * v2z - v1z * v2y
+        val normalY = v1z * v2x - v1x * v2z
+        val normalZ = v1x * v2y - v1y * v2x
+
+        // Normalize the vector
+        val magnitude = kotlin.math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ)
+        if (magnitude == 0.0f) return false
+
+        val normalizedZ = normalZ / magnitude
+
+        // Check if palm is facing up (normal z-component should be negative for front camera)
+        // Also check that the normal is sufficiently vertical (not too tilted)
+        val isHorizontal = normalizedZ < -0.3 // Palm facing camera/up
+
+        Log.d(
+            "HandTracking",
+            "Palm orientation - normalZ: $normalizedZ, isHorizontal: $isHorizontal"
+        )
+
+        return isHorizontal
+    }
+
+    fun getPalmDirection(
+        landmarks: List<NormalizedLandmark>,
+        imageWidth: Int,
+        imageHeight: Int
+    ): Pair<Float, Float> {
+        // Calculate palm direction vector from wrist to middle finger base
+        val wrist = landmarks[0]
+        val middleBase = landmarks[9]
+
+        val wristX = wrist.x() * imageWidth
+        val wristY = wrist.y() * imageHeight
+        val middleBaseX = middleBase.x() * imageWidth
+        val middleBaseY = middleBase.y() * imageHeight
+
+        // Direction vector (pointing from wrist toward fingers)
+        val directionX = middleBaseX - wristX
+        val directionY = middleBaseY - wristY
+
+        // Normalize
+        val magnitude = kotlin.math.sqrt(directionX * directionX + directionY * directionY)
+        if (magnitude == 0.0f) return Pair(0f, 0f)
+
+        return Pair(directionX / magnitude, directionY / magnitude)
+    }
 }
 
 @Composable
@@ -320,6 +458,9 @@ fun CameraScreen(
     drawingPaths: State<List<List<Offset>>>,
     isHandOpen: State<Boolean>,
     isLeftHand: State<Boolean>,
+    isHorizontalOpenPalm: State<Boolean>,
+    palmCenter: State<Offset?>,
+    palmDirection: State<Pair<Float, Float>?>,
     previewSize: State<Pair<Int, Int>?>,
     isCurrentlyDrawing: State<Boolean>,
     currentPath: State<List<Offset>>
@@ -355,6 +496,9 @@ fun CameraScreen(
                 drawingPaths = drawingPaths.value,
                 isHandOpen = isHandOpen.value,
                 isLeftHand = isLeftHand.value,
+                isHorizontalOpenPalm = isHorizontalOpenPalm.value,
+                palmCenter = palmCenter.value,
+                palmDirection = palmDirection.value,
                 previewSize = previewSize.value,
                 isCurrentlyDrawing = isCurrentlyDrawing.value,
                 currentPath = currentPath.value
@@ -456,108 +600,201 @@ fun FingerTipOverlay(
     drawingPaths: List<List<Offset>>,
     isHandOpen: Boolean,
     isLeftHand: Boolean,
+    isHorizontalOpenPalm: Boolean,
+    palmCenter: Offset?,
+    palmDirection: Pair<Float, Float>?,
     previewSize: Pair<Int, Int>?,
     isCurrentlyDrawing: Boolean,
     currentPath: List<Offset>,
     modifier: Modifier = Modifier
 ) {
-    Canvas(modifier = modifier.fillMaxSize()) {
-        Log.d(
-            "HandTracking",
-            "FingerTipOverlay - isLeftHand: $isLeftHand, fingerTipPosition: $fingerTipPosition, isHandOpen: $isHandOpen"
-        )
+    Box(modifier = modifier.fillMaxSize()) {
+        // Canvas for drawing paths and finger indicators
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            Log.d(
+                "HandTracking",
+                "FingerTipOverlay - isLeftHand: $isLeftHand, fingerTipPosition: $fingerTipPosition, isHandOpen: $isHandOpen"
+            )
 
-        // Always draw existing paths, regardless of hand detection
-        if (previewSize != null && previewSize.first > 0 && previewSize.second > 0) {
-            val scaleX = size.width / previewSize.first
-            val scaleY = size.height / previewSize.second
+            // Always draw existing paths, regardless of hand detection
+            if (previewSize != null && previewSize.first > 0 && previewSize.second > 0) {
+                val scaleX = size.width / previewSize.first
+                val scaleY = size.height / previewSize.second
 
-            // Calculate the actual preview area (maintaining aspect ratio)
-            val inputAspectRatio = previewSize.first.toFloat() / previewSize.second.toFloat()
-            val displayAspectRatio = size.width / size.height
-            val actualPreviewWidth = size.height * inputAspectRatio
-            val xOffset = (size.width - actualPreviewWidth) / 2
-            val actualScaleX = actualPreviewWidth / previewSize.first
+                // Calculate the actual preview area (maintaining aspect ratio)
+                val inputAspectRatio = previewSize.first.toFloat() / previewSize.second.toFloat()
+                val displayAspectRatio = size.width / size.height
+                val actualPreviewWidth = size.height * inputAspectRatio
+                val xOffset = (size.width - actualPreviewWidth) / 2
+                val actualScaleX = actualPreviewWidth / previewSize.first
 
-            // Draw the drawing paths (always visible)
-            for (path in drawingPaths) {
-                if (path.size > 1) {
-                    val pathToDraw = Path()
+                // Draw the drawing paths (always visible)
+                for (path in drawingPaths) {
+                    if (path.size > 1) {
+                        val pathToDraw = Path()
+                        var prev: Offset? = null
+                        for ((index, point) in path.withIndex()) {
+                            val px = xOffset + (point.x * actualScaleX)
+                            val py = point.y * scaleY
+                            val current = Offset(px, py)
+                            if (index == 0) {
+                                pathToDraw.moveTo(current.x, current.y)
+                            } else {
+                                prev?.let { prevPoint ->
+                                    val mx = (prevPoint.x + current.x) / 2
+                                    val my = (prevPoint.y + current.y) / 2
+                                    pathToDraw.quadraticTo(prevPoint.x, prevPoint.y, mx, my)
+                                }
+                            }
+                            prev = current
+                        }
+                        prev?.let { last ->
+                            pathToDraw.lineTo(last.x, last.y)
+                        }
+                        drawPath(
+                            path = pathToDraw,
+                            color = Color.Red,
+                            style = Stroke(width = 10f, cap = StrokeCap.Round)
+                        )
+                    }
+                }
+
+                // Draw the current drawing path (always visible)
+                if (currentPath.size > 1) {
+                    val path = Path()
                     var prev: Offset? = null
-                    for ((index, point) in path.withIndex()) {
+                    for ((index, point) in currentPath.withIndex()) {
                         val px = xOffset + (point.x * actualScaleX)
                         val py = point.y * scaleY
                         val current = Offset(px, py)
                         if (index == 0) {
-                            pathToDraw.moveTo(current.x, current.y)
+                            path.moveTo(current.x, current.y)
                         } else {
                             prev?.let { prevPoint ->
                                 val mx = (prevPoint.x + current.x) / 2
                                 val my = (prevPoint.y + current.y) / 2
-                                pathToDraw.quadraticTo(prevPoint.x, prevPoint.y, mx, my)
+                                path.quadraticTo(prevPoint.x, prevPoint.y, mx, my)
                             }
                         }
                         prev = current
                     }
                     prev?.let { last ->
-                        pathToDraw.lineTo(last.x, last.y)
+                        path.lineTo(last.x, last.y)
                     }
                     drawPath(
-                        path = pathToDraw,
+                        path = path,
                         color = Color.Red,
                         style = Stroke(width = 10f, cap = StrokeCap.Round)
                     )
                 }
-            }
 
-            // Draw the current drawing path (always visible)
-            if (currentPath.size > 1) {
-                val path = Path()
-                var prev: Offset? = null
-                for ((index, point) in currentPath.withIndex()) {
-                    val px = xOffset + (point.x * actualScaleX)
-                    val py = point.y * scaleY
-                    val current = Offset(px, py)
-                    if (index == 0) {
-                        path.moveTo(current.x, current.y)
-                    } else {
-                        prev?.let { prevPoint ->
-                            val mx = (prevPoint.x + current.x) / 2
-                            val my = (prevPoint.y + current.y) / 2
-                            path.quadraticTo(prevPoint.x, prevPoint.y, mx, my)
-                        }
-                    }
-                    prev = current
+                // Draw palm center indicator for horizontal open palm (but not the fire - that's handled by Lottie)
+                if (isHorizontalOpenPalm && palmCenter != null) {
+                    val x = xOffset + (palmCenter.x * actualScaleX)
+                    val y = palmCenter.y * scaleY
+
+                    // Draw palm center indicator
+                    drawCircle(
+                        color = Color.Blue,
+                        radius = 8f,
+                        center = Offset(x, y)
+                    )
+
+                    Log.d("HandTracking", "Drawing palm center at ($x, $y)")
                 }
-                prev?.let { last ->
-                    path.lineTo(last.x, last.y)
+
+                // Only draw the fingertip indicator if hands are detected and no horizontal palm
+                if (!isHorizontalOpenPalm && !isLeftHand && fingerTipPosition != null) {
+                    val x = xOffset + (fingerTipPosition.x * actualScaleX)
+                    val y = fingerTipPosition.y * scaleY
+
+                    Log.d(
+                        "HandTracking", "X-coordinate fix - " +
+                                "InputAspect: $inputAspectRatio, DisplayAspect: $displayAspectRatio, " +
+                                "ActualPreviewWidth: $actualPreviewWidth, XOffset: $xOffset, " +
+                                "ActualScaleX: $actualScaleX, " +
+                                "FingerTip adjusted: ($x, $y)"
+                    )
+
+                    drawCircle(
+                        color = if (isHandOpen) Color.Green else Color.Red,
+                        radius = 20f,
+                        center = Offset(x, y)
+                    )
+                    Log.d("HandTracking", "Drawing dot for RIGHT hand - isHandOpen: $isHandOpen")
                 }
-                drawPath(
-                    path = path,
-                    color = Color.Red,
-                    style = Stroke(width = 10f, cap = StrokeCap.Round)
+            }
+        }
+
+        // Lottie fire animation for horizontal open palm
+        if (isHorizontalOpenPalm && palmCenter != null && previewSize != null) {
+            val configuration = LocalConfiguration.current
+            val screenWidthDp = configuration.screenWidthDp
+            val screenHeightDp = configuration.screenHeightDp
+
+            // Use the same scaling logic as the Canvas
+            val inputAspectRatio = previewSize.first.toFloat() / previewSize.second.toFloat()
+            val actualPreviewWidth = screenHeightDp * inputAspectRatio
+            val xOffset = (screenWidthDp - actualPreviewWidth) / 2
+            val actualScaleX = actualPreviewWidth / previewSize.first
+            val scaleY = screenHeightDp.toFloat() / previewSize.second
+
+            // Convert palm center to screen coordinates
+            val palmScreenX = xOffset + (palmCenter.x * actualScaleX)
+            val palmScreenY = palmCenter.y * scaleY
+
+            // Since phone is horizontal and palm appears sideways:
+            // Use palm direction to position fire perpendicular to palm surface
+            if (palmDirection != null) {
+                // Palm direction vector points from wrist toward fingers
+                // Perpendicular vector (rotated 90 degrees) points away from palm surface
+                // We want it to point "above" the palm, so we flip the direction
+                val perpendicularX = palmDirection.second  // Flipped: use +dy instead of -dy
+                val perpendicularY = -palmDirection.first  // Flipped: use -dx instead of +dx
+
+                // Scale the perpendicular vector for fire distance (80 pixels away from palm)
+                val fireDistance = 80f
+                val fireOffsetX = perpendicularX * fireDistance
+                val fireOffsetY = perpendicularY * fireDistance
+
+                // Calculate rotation angle from palm direction vector (direction fingers are pointing)
+                val angleRadians = kotlin.math.atan2(palmDirection.second, palmDirection.first)
+                val angleDegrees = Math.toDegrees(angleRadians.toDouble()).toFloat()
+
+                val composition by rememberLottieComposition(LottieCompositionSpec.Asset("flame-animation.json"))
+                val progress by animateLottieCompositionAsState(
+                    composition,
+                    iterations = LottieConstants.IterateForever,
+                    speed = 1f
                 )
-            }
 
-            // Only draw the fingertip indicator if hands are detected
-            if (!isLeftHand && fingerTipPosition != null) {
-                val x = xOffset + (fingerTipPosition.x * actualScaleX)
-                val y = fingerTipPosition.y * scaleY
+                LottieAnimation(
+                    composition = composition,
+                    progress = { progress },
+                    modifier = Modifier
+                        .size(100.dp)
+                        .offset(
+                            x = (palmScreenX + fireOffsetX - 50).dp, // Center the 100dp animation
+                            y = (palmScreenY + fireOffsetY - 50).dp  // Center the 100dp animation
+                        )
+                        .rotate(angleDegrees),
+                    dynamicProperties = rememberLottieDynamicProperties(
+                        rememberLottieDynamicProperty(
+                            property = LottieProperty.COLOR,
+                            value = Color(0xFFFFA500), // Orange color
+                            keyPath = arrayOf("**")
+                        )
+                    )
+                )
 
                 Log.d(
-                    "HandTracking", "X-coordinate fix - " +
-                            "InputAspect: $inputAspectRatio, DisplayAspect: $displayAspectRatio, " +
-                            "ActualPreviewWidth: $actualPreviewWidth, XOffset: $xOffset, " +
-                            "ActualScaleX: $actualScaleX, " +
-                            "FingerTip adjusted: ($x, $y)"
+                    "HandTracking",
+                    "Palm direction: (${palmDirection.first}, ${palmDirection.second}), " +
+                            "Perpendicular: ($perpendicularX, $perpendicularY), " +
+                            "Fire offset: ($fireOffsetX, $fireOffsetY), " +
+                            "Fire position: (${palmScreenX + fireOffsetX}, ${palmScreenY + fireOffsetY}), " +
+                            "Angle degrees: $angleDegrees"
                 )
-
-                drawCircle(
-                    color = if (isHandOpen) Color.Green else Color.Red,
-                    radius = 20f,
-                    center = Offset(x, y)
-                )
-                Log.d("HandTracking", "Drawing dot for RIGHT hand - isHandOpen: $isHandOpen")
             }
         }
     }
