@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -35,7 +34,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.airbnb.lottie.LottieProperty
 import com.airbnb.lottie.compose.*
 import com.example.finger_drawing.ui.theme.FingerdrawingTheme
 import com.google.mediapipe.tasks.vision.core.RunningMode
@@ -83,6 +81,25 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
     private val _palmDirection = mutableStateOf<Pair<Float, Float>?>(null)
     val palmDirection: State<Pair<Float, Float>?> get() = _palmDirection
 
+    // States for both hands horizontal open palm detection
+    private val _leftHandHorizontalOpen = mutableStateOf(false)
+    val leftHandHorizontalOpen: State<Boolean> get() = _leftHandHorizontalOpen
+
+    private val _rightHandHorizontalOpen = mutableStateOf(false)
+    val rightHandHorizontalOpen: State<Boolean> get() = _rightHandHorizontalOpen
+
+    private val _leftPalmCenter = mutableStateOf<Offset?>(null)
+    val leftPalmCenter: State<Offset?> get() = _leftPalmCenter
+
+    private val _rightPalmCenter = mutableStateOf<Offset?>(null)
+    val rightPalmCenter: State<Offset?> get() = _rightPalmCenter
+
+    private val _leftPalmDirection = mutableStateOf<Pair<Float, Float>?>(null)
+    val leftPalmDirection: State<Pair<Float, Float>?> get() = _leftPalmDirection
+
+    private val _rightPalmDirection = mutableStateOf<Pair<Float, Float>?>(null)
+    val rightPalmDirection: State<Pair<Float, Float>?> get() = _rightPalmDirection
+
     private val _previewSize = mutableStateOf<Pair<Int, Int>?>(null)
     val previewSize: State<Pair<Int, Int>?> get() = _previewSize
 
@@ -108,6 +125,12 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                         isHorizontalOpenPalm = isHorizontalOpenPalm,
                         palmCenter = palmCenter,
                         palmDirection = palmDirection,
+                        leftHandHorizontalOpen = leftHandHorizontalOpen,
+                        rightHandHorizontalOpen = rightHandHorizontalOpen,
+                        leftPalmCenter = leftPalmCenter,
+                        rightPalmCenter = rightPalmCenter,
+                        leftPalmDirection = leftPalmDirection,
+                        rightPalmDirection = rightPalmDirection,
                         previewSize = previewSize,
                         isCurrentlyDrawing = isCurrentlyDrawing,
                         currentPath = currentPath
@@ -178,7 +201,8 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                             Log.d(
                                 "HandTracking",
                                 "Hand $handIndex - Finger tip: (${fingerTipX.toInt()}, ${fingerTipY.toInt()}), " +
-                                        "Handedness: $handenessLabel, Left: $isLeft, Open: $isOpen, Horizontal Open: $isHorizontalOpen"
+                                        "Handedness: $handenessLabel, Left: $isLeft, Open: $isOpen, Horizontal Open: $isHorizontalOpen, " +
+                                        "MediaPipe says: $handenessLabel (Left=$isLeft)"
                             )
 
                             if (isLeft) {
@@ -194,30 +218,71 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
                             }
 
                             if (isHorizontalOpen) {
-                                _isHorizontalOpenPalm.value = true
-                                // Calculate palm center as average of key palm landmarks
-                                val palmLandmarks =
-                                    listOf(0, 5, 9, 13, 17) // wrist, base of each finger
-                                var centerX = 0f
-                                var centerY = 0f
-                                for (landmarkIndex in palmLandmarks) {
-                                    centerX += landmarks[landmarkIndex].x() * resultBundle.inputImageWidth
-                                    centerY += landmarks[landmarkIndex].y() * resultBundle.inputImageHeight
-                                }
-                                centerX /= palmLandmarks.size
-                                centerY /= palmLandmarks.size
-                                _palmCenter.value = Offset(centerX, centerY)
+                                if (isLeft) {
+                                    _leftHandHorizontalOpen.value = true
+                                    // Calculate palm center as average of key palm landmarks
+                                    val palmLandmarks =
+                                        listOf(0, 5, 9, 13, 17) // wrist, base of each finger
+                                    var centerX = 0f
+                                    var centerY = 0f
+                                    for (landmarkIndex in palmLandmarks) {
+                                        centerX += landmarks[landmarkIndex].x() * resultBundle.inputImageWidth
+                                        centerY += landmarks[landmarkIndex].y() * resultBundle.inputImageHeight
+                                    }
+                                    centerX /= palmLandmarks.size
+                                    centerY /= palmLandmarks.size
+                                    _leftPalmCenter.value = Offset(centerX, centerY)
 
-                                val palmDirection = getPalmDirection(
-                                    landmarks,
-                                    resultBundle.inputImageWidth,
-                                    resultBundle.inputImageHeight
-                                )
-                                _palmDirection.value = palmDirection
+                                    val palmDirection = getPalmDirection(
+                                        landmarks,
+                                        resultBundle.inputImageWidth,
+                                        resultBundle.inputImageHeight
+                                    )
+                                    _leftPalmDirection.value = palmDirection
+
+                                    Log.d(
+                                        "HandTracking",
+                                        "LEFT HAND horizontal palm detected at ($centerX, $centerY)"
+                                    )
+                                } else {
+                                    _rightHandHorizontalOpen.value = true
+                                    // Calculate palm center as average of key palm landmarks
+                                    val palmLandmarks =
+                                        listOf(0, 5, 9, 13, 17) // wrist, base of each finger
+                                    var centerX = 0f
+                                    var centerY = 0f
+                                    for (landmarkIndex in palmLandmarks) {
+                                        centerX += landmarks[landmarkIndex].x() * resultBundle.inputImageWidth
+                                        centerY += landmarks[landmarkIndex].y() * resultBundle.inputImageHeight
+                                    }
+                                    centerX /= palmLandmarks.size
+                                    centerY /= palmLandmarks.size
+                                    _rightPalmCenter.value = Offset(centerX, centerY)
+
+                                    val palmDirection = getPalmDirection(
+                                        landmarks,
+                                        resultBundle.inputImageWidth,
+                                        resultBundle.inputImageHeight
+                                    )
+                                    _rightPalmDirection.value = palmDirection
+
+                                    Log.d(
+                                        "HandTracking",
+                                        "RIGHT HAND horizontal palm detected at ($centerX, $centerY)"
+                                    )
+                                }
                             } else {
-                                _isHorizontalOpenPalm.value = false
-                                _palmCenter.value = null
-                                _palmDirection.value = null
+                                if (isLeft) {
+                                    _leftHandHorizontalOpen.value = false
+                                    _leftPalmCenter.value = null
+                                    _leftPalmDirection.value = null
+                                    Log.d("HandTracking", "LEFT HAND horizontal palm NOT detected")
+                                } else {
+                                    _rightHandHorizontalOpen.value = false
+                                    _rightPalmCenter.value = null
+                                    _rightPalmDirection.value = null
+                                    Log.d("HandTracking", "RIGHT HAND horizontal palm NOT detected")
+                                }
                             }
                         }
                     }
@@ -398,13 +463,37 @@ class MainActivity : ComponentActivity(), HandLandmarkerHelper.LandmarkerListene
 
         val normalizedZ = normalZ / magnitude
 
-        // Check if palm is facing up (normal z-component should be negative for front camera)
-        // Also check that the normal is sufficiently vertical (not too tilted)
-        val isHorizontal = normalizedZ < -0.3 // Palm facing camera/up
+        // More lenient check: lower threshold from -0.3 to -0.1 and add alternative method
+        val isHorizontalByNormal = normalizedZ < -0.1 // More lenient palm facing camera/up
+
+        // Also try the opposite direction in case of mirroring issues
+        val isHorizontalByNormalFlipped =
+            normalizedZ > 0.1 // Palm facing away but might be mirrored
+
+        // Alternative method: Check if fingertips are roughly at the same Y level as wrist
+        // This catches cases where the normal vector calculation might be off
+        val fingertipY = landmarks[8].y() * imageHeight // Index finger tip
+        val middleTipY = landmarks[12].y() * imageHeight // Middle finger tip
+        val ringTipY = landmarks[16].y() * imageHeight // Ring finger tip
+        val wristYCoord = wrist.y() * imageHeight
+
+        // Check if fingertips are not significantly above or below wrist (horizontal-ish)
+        val avgFingertipY = (fingertipY + middleTipY + ringTipY) / 3
+        val verticalDistance = kotlin.math.abs(avgFingertipY - wristYCoord)
+        val handLength =
+            kotlin.math.sqrt((indexBaseX - wristX) * (indexBaseX - wristX) + (indexBaseY - wristY) * (indexBaseY - wristY))
+        val isHorizontalByLevel =
+            verticalDistance < handLength * 0.5f // Increased from 40% to 50% for more leniency
+
+        val isHorizontal =
+            isHorizontalByNormal || isHorizontalByNormalFlipped || isHorizontalByLevel
 
         Log.d(
             "HandTracking",
-            "Palm orientation - normalZ: $normalizedZ, isHorizontal: $isHorizontal"
+            "Palm orientation - normalZ: $normalizedZ, byNormal: $isHorizontalByNormal, " +
+                    "byNormalFlipped: $isHorizontalByNormalFlipped, " +
+                    "verticalDist: $verticalDistance, handLength: $handLength, byLevel: $isHorizontalByLevel, " +
+                    "final: $isHorizontal"
         )
 
         return isHorizontal
@@ -461,6 +550,12 @@ fun CameraScreen(
     isHorizontalOpenPalm: State<Boolean>,
     palmCenter: State<Offset?>,
     palmDirection: State<Pair<Float, Float>?>,
+    leftHandHorizontalOpen: State<Boolean>,
+    rightHandHorizontalOpen: State<Boolean>,
+    leftPalmCenter: State<Offset?>,
+    rightPalmCenter: State<Offset?>,
+    leftPalmDirection: State<Pair<Float, Float>?>,
+    rightPalmDirection: State<Pair<Float, Float>?>,
     previewSize: State<Pair<Int, Int>?>,
     isCurrentlyDrawing: State<Boolean>,
     currentPath: State<List<Offset>>
@@ -499,6 +594,12 @@ fun CameraScreen(
                 isHorizontalOpenPalm = isHorizontalOpenPalm.value,
                 palmCenter = palmCenter.value,
                 palmDirection = palmDirection.value,
+                leftHandHorizontalOpen = leftHandHorizontalOpen.value,
+                rightHandHorizontalOpen = rightHandHorizontalOpen.value,
+                leftPalmCenter = leftPalmCenter.value,
+                rightPalmCenter = rightPalmCenter.value,
+                leftPalmDirection = leftPalmDirection.value,
+                rightPalmDirection = rightPalmDirection.value,
                 previewSize = previewSize.value,
                 isCurrentlyDrawing = isCurrentlyDrawing.value,
                 currentPath = currentPath.value
@@ -603,6 +704,12 @@ fun FingerTipOverlay(
     isHorizontalOpenPalm: Boolean,
     palmCenter: Offset?,
     palmDirection: Pair<Float, Float>?,
+    leftHandHorizontalOpen: Boolean,
+    rightHandHorizontalOpen: Boolean,
+    leftPalmCenter: Offset?,
+    rightPalmCenter: Offset?,
+    leftPalmDirection: Pair<Float, Float>?,
+    rightPalmDirection: Pair<Float, Float>?,
     previewSize: Pair<Int, Int>?,
     isCurrentlyDrawing: Boolean,
     currentPath: List<Offset>,
@@ -688,10 +795,47 @@ fun FingerTipOverlay(
                     )
                 }
 
-                // Draw palm center indicator for horizontal open palm (but not the fire - that's handled by Lottie)
-                if (isHorizontalOpenPalm && palmCenter != null) {
-                    val x = xOffset + (palmCenter.x * actualScaleX)
-                    val y = palmCenter.y * scaleY
+                // Check if both hands are in horizontal open palm mode
+                val bothHandsHorizontalOpen = leftHandHorizontalOpen && rightHandHorizontalOpen
+
+                // Only show palm center indicators and skip finger drawing if both hands are horizontal open
+                if (bothHandsHorizontalOpen) {
+                    // Draw left palm center indicator 
+                    if (leftPalmCenter != null) {
+                        val x = xOffset + (leftPalmCenter.x * actualScaleX)
+                        val y = leftPalmCenter.y * scaleY
+
+                        drawCircle(
+                            color = Color.Blue,
+                            radius = 8f,
+                            center = Offset(x, y)
+                        )
+                        Log.d("HandTracking", "Drawing left palm center at ($x, $y)")
+                    }
+
+                    // Draw right palm center indicator
+                    if (rightPalmCenter != null) {
+                        val x = xOffset + (rightPalmCenter.x * actualScaleX)
+                        val y = rightPalmCenter.y * scaleY
+
+                        drawCircle(
+                            color = Color.Blue,
+                            radius = 8f,
+                            center = Offset(x, y)
+                        )
+                        Log.d("HandTracking", "Drawing right palm center at ($x, $y)")
+                    }
+
+                    Log.d("HandTracking", "Both hands horizontal open - showing only fire effects")
+
+                    // Early return - don't show finger tracking dots
+                    return@Canvas
+                }
+
+                // Single hand horizontal open palm indicators (only if not both hands)
+                if (leftHandHorizontalOpen && leftPalmCenter != null && !bothHandsHorizontalOpen) {
+                    val x = xOffset + (leftPalmCenter.x * actualScaleX)
+                    val y = leftPalmCenter.y * scaleY
 
                     // Draw palm center indicator
                     drawCircle(
@@ -699,12 +843,24 @@ fun FingerTipOverlay(
                         radius = 8f,
                         center = Offset(x, y)
                     )
-
-                    Log.d("HandTracking", "Drawing palm center at ($x, $y)")
+                    Log.d("HandTracking", "Drawing left palm center at ($x, $y)")
                 }
 
-                // Only draw the fingertip indicator if hands are detected and no horizontal palm
-                if (!isHorizontalOpenPalm && !isLeftHand && fingerTipPosition != null) {
+                if (rightHandHorizontalOpen && rightPalmCenter != null && !bothHandsHorizontalOpen) {
+                    val x = xOffset + (rightPalmCenter.x * actualScaleX)
+                    val y = rightPalmCenter.y * scaleY
+
+                    // Draw palm center indicator
+                    drawCircle(
+                        color = Color.Blue,
+                        radius = 8f,
+                        center = Offset(x, y)
+                    )
+                    Log.d("HandTracking", "Drawing right palm center at ($x, $y)")
+                }
+
+                // Only draw the fingertip indicator if hands are detected and not both hands horizontal open
+                if (!bothHandsHorizontalOpen && !isLeftHand && fingerTipPosition != null) {
                     val x = xOffset + (fingerTipPosition.x * actualScaleX)
                     val y = fingerTipPosition.y * scaleY
 
@@ -727,7 +883,7 @@ fun FingerTipOverlay(
         }
 
         // Lottie fire animation for horizontal open palm
-        if (isHorizontalOpenPalm && palmCenter != null && previewSize != null) {
+        if (previewSize != null) {
             val configuration = LocalConfiguration.current
             val screenWidthDp = configuration.screenWidthDp
             val screenHeightDp = configuration.screenHeightDp
@@ -736,19 +892,17 @@ fun FingerTipOverlay(
             val inputAspectRatio = previewSize.first.toFloat() / previewSize.second.toFloat()
             val actualPreviewWidth = screenHeightDp * inputAspectRatio
             val xOffset = (screenWidthDp - actualPreviewWidth) / 2
-            val actualScaleX = actualPreviewWidth / previewSize.first
-            val scaleY = screenHeightDp.toFloat() / previewSize.second
+            val actualScaleX = actualPreviewWidth / previewSize.first.toFloat()
+            val scaleY = screenHeightDp.toFloat() / previewSize.second.toFloat()
 
-            // Convert palm center to screen coordinates
-            val palmScreenX = xOffset + (palmCenter.x * actualScaleX)
-            val palmScreenY = palmCenter.y * scaleY
+            // Left hand fire animation
+            if (leftHandHorizontalOpen && leftPalmCenter != null && leftPalmDirection != null) {
+                // Convert palm center to screen coordinates
+                val palmScreenX = xOffset + (leftPalmCenter.x * actualScaleX)
+                val palmScreenY = leftPalmCenter.y * scaleY
 
-            // Since phone is horizontal and palm appears sideways:
-            // Use palm direction to position fire perpendicular to palm surface
-            if (palmDirection != null) {
-                // Palm direction vector points from wrist toward fingers
-                // Perpendicular vector (rotated 90 degrees) points away from palm surface
-                // We want it to point "above" the palm, so we flip the direction
+                // Use palm direction to position fire perpendicular to palm surface
+                val palmDirection = leftPalmDirection
                 val perpendicularX = palmDirection.second  // Flipped: use +dy instead of -dy
                 val perpendicularY = -palmDirection.first  // Flipped: use -dx instead of +dx
 
@@ -777,21 +931,59 @@ fun FingerTipOverlay(
                             x = (palmScreenX + fireOffsetX - 50).dp, // Center the 100dp animation
                             y = (palmScreenY + fireOffsetY - 50).dp  // Center the 100dp animation
                         )
-                        .rotate(angleDegrees),
-                    dynamicProperties = rememberLottieDynamicProperties(
-                        rememberLottieDynamicProperty(
-                            property = LottieProperty.COLOR,
-                            value = Color(0xFFFFA500), // Orange color
-                            keyPath = arrayOf("**")
-                        )
-                    )
+                        .rotate(angleDegrees)
                 )
 
                 Log.d(
                     "HandTracking",
-                    "Palm direction: (${palmDirection.first}, ${palmDirection.second}), " +
-                            "Perpendicular: ($perpendicularX, $perpendicularY), " +
-                            "Fire offset: ($fireOffsetX, $fireOffsetY), " +
+                    "LEFT HAND Fire - Palm direction: (${palmDirection.first}, ${palmDirection.second}), " +
+                            "Fire position: (${palmScreenX + fireOffsetX}, ${palmScreenY + fireOffsetY}), " +
+                            "Angle degrees: $angleDegrees"
+                )
+            }
+
+            // Right hand fire animation
+            if (rightHandHorizontalOpen && rightPalmCenter != null && rightPalmDirection != null) {
+                // Convert palm center to screen coordinates
+                val palmScreenX = xOffset + (rightPalmCenter.x * actualScaleX)
+                val palmScreenY = rightPalmCenter.y * scaleY
+
+                // Use palm direction to position fire perpendicular to palm surface
+                val palmDirection = rightPalmDirection
+                val perpendicularX = palmDirection.second   // Flip back to same as left hand
+                val perpendicularY = -palmDirection.first   // Change back to same as left hand
+
+                // Scale the perpendicular vector for fire distance (80 pixels away from palm)
+                val fireDistance = 80f
+                val fireOffsetX = perpendicularX * fireDistance
+                val fireOffsetY = perpendicularY * fireDistance
+
+                // Calculate rotation angle from palm direction vector (direction fingers are pointing)
+                val angleRadians = kotlin.math.atan2(palmDirection.second, palmDirection.first)
+                val angleDegrees = Math.toDegrees(angleRadians.toDouble()).toFloat()
+
+                val composition by rememberLottieComposition(LottieCompositionSpec.Asset("flame-animation.json"))
+                val progress by animateLottieCompositionAsState(
+                    composition,
+                    iterations = LottieConstants.IterateForever,
+                    speed = 1f
+                )
+
+                LottieAnimation(
+                    composition = composition,
+                    progress = { progress },
+                    modifier = Modifier
+                        .size(100.dp)
+                        .offset(
+                            x = (palmScreenX + fireOffsetX - 50).dp, // Center the 100dp animation
+                            y = (palmScreenY + fireOffsetY - 50).dp  // Center the 100dp animation
+                        )
+                        .rotate(angleDegrees)
+                )
+
+                Log.d(
+                    "HandTracking",
+                    "RIGHT HAND Fire (FIXED) - Palm direction: (${palmDirection.first}, ${palmDirection.second}), " +
                             "Fire position: (${palmScreenX + fireOffsetX}, ${palmScreenY + fireOffsetY}), " +
                             "Angle degrees: $angleDegrees"
                 )
